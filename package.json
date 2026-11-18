@@ -1,0 +1,12 @@
+{
+  "name": "pallet-inbound-counter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "카메라로 하차 팔레트를 상품별로 인식·카운트하는 웹앱 (설치 불필요, 정적 파일)",
+  "type": "module",
+  "scripts": {
+    "start": "python3 -m http.server 8080",
+    "test": "node --test tests/*.test.mjs",
+    "e2e": "node tests/e2e.mjs"
+  }
+}

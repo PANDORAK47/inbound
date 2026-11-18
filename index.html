@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="입고카운터">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <title>팔레트 입고 카운터</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header class="top">
+    <h1>팔레트 입고 카운터</h1>
+    <div class="top-r">
+      <button id="field-btn" class="btn sm" type="button" title="카메라를 크게 쓰는 현장 화면">현장 모드</button>
+      <select id="cam-select" aria-label="영상 입력 선택"></select>
+    </div>
+  </header>
+
+  <!-- 카메라 (입고 작업·상품 학습 공용, 현장 모드에서는 전체 화면) -->
+  <section id="cam-panel">
+    <div class="cam">
+      <video id="video" playsinline muted autoplay></video>
+      <div id="guide" class="guide" hidden></div>
+      <div id="demo-caption" class="demo-caption" hidden></div>
+      <div class="hud">
+        <div id="hud-label">카메라 꺼짐</div>
+        <div class="bar"><i id="hud-bar"></i></div>
+        <div id="hud-state" class="hud-state"></div>
+      </div>
+      <div id="flash" class="flash"></div>
+      <button id="torch-btn" class="cam-icon" type="button" hidden aria-label="손전등">손전등</button>
+      <div id="cam-start" class="cam-start">
+        <button id="src-camera" class="btn primary">카메라 켜기</button>
+        <button id="src-demo" class="btn">데모 카메라</button>
+        <label class="btn" for="src-file">영상 파일</label>
+      </div>
+      <input type="file" id="src-file" accept="video/*" hidden>
+
+      <!-- 현장 모드 오버레이 -->
+      <div id="field-ui" class="field-ui" hidden>
+        <div class="field-top">
+          <div><b id="f-title"></b><small id="f-total"></small></div>
+          <button id="field-exit" class="btn sm" type="button">나가기</button>
+        </div>
+        <div id="f-chips" class="f-chips"></div>
+        <div id="f-last" class="f-last" hidden></div>
+        <div class="field-bottom">
+          <button id="f-fall" class="btn danger" type="button">전도</button>
+          <button id="f-plus" class="btn" type="button">+1 수동</button>
+          <button id="f-review" class="btn warn" type="button">확인 <span id="f-review-n">0</span></button>
+        </div>
+      </div>
+    </div>
+    <div class="cam-ctl">
+      <div class="seg" id="mode-seg">
+        <button data-mode="auto" class="on" title="AI 외관 + 바코드 라벨">자동</button>
+        <button data-mode="barcode" title="바코드 라벨만">바코드</button>
+        <button data-mode="manual" title="버튼으로만 기록">수동</button>
+      </div>
+      <label class="switch"><input type="checkbox" id="auto-count" checked><span>자동 카운트</span></label>
+    </div>
+    <div id="demo-bar" class="demo-bar" hidden>
+      <span>데모 장면</span>
+      <button class="btn" data-scene="bg">빈 화면</button>
+      <button class="btn" data-scene="A">A 팔레트</button>
+      <button class="btn" data-scene="B">B 팔레트</button>
+      <button class="btn" data-scene="code">A 라벨</button>
+      <button class="btn" data-scene="sscc">SSCC 라벨</button>
+    </div>
+  </section>
+
+  <main>
+    <!-- 입고 작업 -->
+    <section id="tab-work" class="tab-body">
+      <form id="start-form" class="card">
+        <h2>입고 시작</h2>
+        <div class="row">
+          <input id="in-vehicle" placeholder="차량번호 (예: 12가3456)" autocomplete="off">
+          <input id="in-partner" placeholder="거래처 (선택)" autocomplete="off">
+        </div>
+        <details class="asn">
+          <summary>입고 예정 목록 (ASN·발주) 붙여넣기 — 선택</summary>
+          <textarea id="in-expected" rows="4" placeholder="상품명 또는 GTIN, 팔레트수, SSCC(선택)&#10;A상품, 10&#10;B상품, 5&#10;A상품,, 388012345000000013"></textarea>
+          <p class="hint">엑셀에서 복사해 붙여넣어도 됩니다. 예정 목록이 있으면 ① AI가 예정 상품 중에서만 고르고 ② SSCC만 있는 라벨도 상품을 알 수 있고 ③ 예정 대비 과부족을 보여줍니다.</p>
+          <p class="hint err" id="expected-err" hidden></p>
+        </details>
+        <button class="btn primary big" type="submit">입고 시작</button>
+        <p class="hint" id="no-product-hint" hidden>먼저 <b>상품</b> 탭에서 상품을 등록하세요.</p>
+        <button type="button" id="demo-run" class="btn big">카메라 없이 1분 체험 (자동 시연)</button>
+      </form>
+
+      <div id="session" hidden>
+        <div class="session-bar">
+          <div><b id="ses-title"></b><small id="ses-time"></small></div>
+          <button id="end-btn" class="btn">입고 완료</button>
+        </div>
+        <button id="review-banner" class="review-banner" type="button" hidden></button>
+        <div id="tiles" class="tiles"></div>
+        <div class="actions">
+          <button id="fall-btn" class="btn danger big">전도(넘어짐) 기록</button>
+          <button id="undo-btn" class="btn">되돌리기</button>
+        </div>
+        <div class="card">
+          <pre id="summary" class="summary"></pre>
+          <div id="metrics" class="metrics"></div>
+          <div class="row">
+            <button id="copy-btn" class="btn">요약 복사</button>
+            <button id="csv-btn" class="btn">CSV 저장</button>
+          </div>
+        </div>
+        <div class="card">
+          <h3>팔레트 기록 <small class="hint">누르면 사진·수정</small></h3>
+          <ul id="log" class="log"></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 확인 필요 -->
+    <section id="tab-review" class="tab-body" hidden>
+      <div class="card">
+        <h2>확인 필요 팔레트</h2>
+        <p class="hint">AI·라벨 근거가 애매한 팔레트입니다. 사진을 보고 맞는 상품을 누르세요. 확정한 사진은 AI 학습에 더해져 다음부터 더 정확해집니다.</p>
+      </div>
+      <div id="review-list"></div>
+    </section>
+
+    <!-- 상품·학습 -->
+    <section id="tab-train" class="tab-body" hidden>
+      <div class="card">
+        <h2>상품 등록</h2>
+        <form id="add-form" class="row">
+          <input id="new-name" placeholder="상품명 (예: A상품)" autocomplete="off" required>
+          <button class="btn primary" type="submit">추가</button>
+        </form>
+        <p class="hint">
+          ① <b>빈 화면</b>: 팔레트 없는 하차장 바닥을 30장 이상<br>
+          ② <b>상품별</b>: 팔레트를 여러 각도·거리로 30장 이상<br>
+          ③ <b>GTIN</b>: 박스/팔레트 라벨의 상품코드를 넣으면 라벨로 확실하게 식별합니다.
+        </p>
+      </div>
+      <div id="classes"></div>
+
+      <details class="card">
+        <summary>인식 설정</summary>
+        <div class="settings">
+          <label>인식 확정 시간 <output id="o-enter"></output>
+            <input type="range" id="s-enter" min="0.2" max="3" step="0.1"></label>
+          <label>팔레트 사이 빈 화면 시간 <output id="o-exit"></output>
+            <input type="range" id="s-exit" min="0.4" max="5" step="0.1"></label>
+          <label>AI 최소 신뢰도 <output id="o-conf"></output>
+            <input type="range" id="s-conf" min="0.5" max="0.95" step="0.05"></label>
+          <label>AI 자동 확정 기준 (이보다 낮으면 '확인 필요') <output id="o-auto"></output>
+            <input type="range" id="s-auto" min="0.5" max="0.99" step="0.01"></label>
+          <label>AI 영역 크기 <output id="o-roi"></output>
+            <input type="range" id="s-roi" min="0.4" max="1" step="0.05"></label>
+          <label class="check"><input type="checkbox" id="s-zoom"> 먼 라벨 확대 판독 (바코드 모드, 느려짐)</label>
+          <label class="check"><input type="checkbox" id="s-dedupe"> SSCC 없는 바코드도 재스캔 무시</label>
+          <label class="check"><input type="checkbox" id="s-sound"> 카운트 시 소리·진동</label>
+        </div>
+      </details>
+
+      <div class="card">
+        <h3>학습 데이터 옮기기 (맥북 ↔ 휴대폰)</h3>
+        <div class="row">
+          <button id="export-btn" class="btn">내보내기</button>
+          <label class="btn">가져오기<input type="file" id="import-file" accept=".json" hidden></label>
+        </div>
+        <p class="hint" id="engine-info"></p>
+      </div>
+    </section>
+
+    <!-- 기록 -->
+    <section id="tab-history" class="tab-body" hidden>
+      <div class="row">
+        <button id="csv-all-btn" class="btn">전체 CSV</button>
+      </div>
+      <div id="history"></div>
+    </section>
+  </main>
+
+  <nav class="bottom-nav" role="tablist">
+    <button class="tab active" data-tab="work"><span class="ic">▣</span>작업</button>
+    <button class="tab" data-tab="review"><span class="ic">✓</span>확인<i id="nav-review-n" class="badge" hidden>0</i></button>
+    <button class="tab" data-tab="train"><span class="ic">◎</span>상품</button>
+    <button class="tab" data-tab="history"><span class="ic">≡</span>기록</button>
+  </nav>
+
+  <!-- 전도 기록 -->
+  <dialog id="fall-dlg">
+    <form method="dialog" class="dlg">
+      <h2>전도(넘어짐) 기록</h2>
+      <img id="fall-photo" alt="현장 사진">
+      <button type="button" id="fall-retake" class="btn">사진 다시 찍기</button>
+      <label>상품 <select id="fall-product"></select></label>
+      <label>팔레트 수 <input type="number" id="fall-qty" min="1" value="1" inputmode="numeric"></label>
+      <label>메모 <input id="fall-note" placeholder="예: 하차 중 지게차 충돌"></label>
+      <div class="row">
+        <button value="cancel" class="btn">취소</button>
+        <button value="ok" id="fall-ok" class="btn danger">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 팔레트 상세·수정 -->
+  <dialog id="pallet-dlg">
+    <form method="dialog" class="dlg">
+      <h2 id="pd-title">팔레트</h2>
+      <img id="pd-photo" alt="팔레트 사진">
+      <dl id="pd-info" class="pd-info"></dl>
+      <label>상품 <select id="pd-product"></select></label>
+      <label>팔레트 수 <small class="hint">(2단 적재 등)</small> <input type="number" id="pd-qty" min="1" value="1" inputmode="numeric"></label>
+      <div class="row">
+        <button value="delete" class="btn">삭제</button>
+        <button value="cancel" class="btn">닫기</button>
+        <button value="ok" class="btn primary">확정</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 미등록 바코드 연결 -->
+  <dialog id="code-dlg">
+    <form method="dialog" class="dlg">
+      <h2>미등록 바코드</h2>
+      <p><code id="code-val"></code></p>
+      <p class="hint" id="code-gtin"></p>
+      <label>연결할 상품 <select id="code-product"></select></label>
+      <div class="row">
+        <button value="cancel" class="btn">무시</button>
+        <button value="ok" class="btn primary">연결</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 확인 창 (브라우저 confirm 대신) -->
+  <dialog id="ask-dlg">
+    <form method="dialog" class="dlg">
+      <p id="ask-msg" class="ask-msg"></p>
+      <div class="row">
+        <button value="cancel" class="btn">취소</button>
+        <button value="ok" id="ask-ok" class="btn primary">확인</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="vendor/tf.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
