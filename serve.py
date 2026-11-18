@@ -8,7 +8,9 @@ GitHub Pages 와 같은 파일 구조를 쓰기 위해 public/ 대신 저장소 
 """
 import http.server
 import os
+import posixpath
 import re
+import urllib.parse
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -34,12 +36,21 @@ PORT = int(env("PORT") or 8000)
 PROJECT_ID = env("PROJECT_ID")
 
 
+def normalize(raw_path: str) -> str:
+    """요청 경로를 파일 서버(SimpleHTTPRequestHandler.translate_path)와 똑같이 해석한다:
+    쿼리 제거 → %-디코딩 → 정규화(.. 처리). 허용 검사는 반드시 이 결과에 한다.
+    (원문 경로로 검사하면 /js/%2e%2e/%2eenv 가 검사는 통과하고 서버에서는 /.env 로 풀린다)"""
+    raw = raw_path.split("?", 1)[0].split("#", 1)[0]
+    return posixpath.normpath(urllib.parse.unquote(raw, errors="surrogatepass")).lstrip("/")
+
+
 def allowed(rel: str) -> bool:
-    if rel in ("", "/"):
-        return True
-    rel = rel.lstrip("/")
-    if ".." in rel.split("/") or "/." in "/" + rel:
-        return False
+    """rel: normalize() 결과(앞의 / 없음)."""
+    if rel in ("", "."):
+        return True                                   # / → index.html
+    parts = rel.split("/")
+    if any(p in ("", "..") or p.startswith(".") or "\\" in p for p in parts):
+        return False                                  # 숨김 파일(.env, .git)·상위 폴더·역슬래시 차단
     return rel in ALLOW_FILES or rel.startswith(ALLOW_DIRS)
 
 
@@ -63,7 +74,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(HERE), **kwargs)
 
     def _rel(self):
-        return self.path.split("?", 1)[0].split("#", 1)[0]
+        return normalize(self.path)
 
     def do_GET(self):
         if not allowed(self._rel()):
@@ -82,7 +93,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return None
 
     def end_headers(self):
-        rel = self._rel().lstrip("/")
+        rel = self._rel()
         self.send_header("Cache-Control", "public, max-age=86400" if rel.startswith(LONG_CACHE) else "no-store")
         self.send_header("X-Projctl-Id", PROJECT_ID)  # projctl check 가 '맞는 프로젝트인지' 확인
         self.send_header("X-Content-Type-Options", "nosniff")
