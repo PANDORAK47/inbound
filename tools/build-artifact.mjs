@@ -19,6 +19,8 @@ html = html
   .replace(/\s*<meta charset[^>]*>/i, '')
   .replace(/\s*<meta name="viewport"[^>]*>/i, '')
   .replace(/\s*<meta name="theme-color"[^>]*>/i, '')
+  .replace(/\s*<meta name="(apple-mobile-web-app-capable|mobile-web-app-capable|apple-mobile-web-app-title)"[^>]*>/gi, '')
+  .replace(/\s*<link rel="(manifest|icon|apple-touch-icon)"[^>]*>/gi, '')
   .replace(/(<title>[^<]*<\/title>)/, '$1\n  <meta name="claude:viewport-fit-sides" content="cover">')
   .replace(/<link rel="stylesheet" href="css\/app.css">/, `<style>\n${css}</style>`);
 

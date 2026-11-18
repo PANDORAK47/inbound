@@ -47,9 +47,9 @@ async function loadFromBase64(jsonUrl, b64Url) {
 export const isLoaded = () => !!model;
 export const backend = () => (window.tf ? tf.getBackend() : '-');
 
-// 영상 → 정규화된 특징벡터(Float32Array)
-export function embed(video) {
-  drawCenterSquare(video, crop, SIZE);
+// 영상 → 정규화된 특징벡터(Float32Array). roi: AI가 보는 중앙 정사각형 크기 비율(1 = 짧은 변 전체)
+export function embed(video, roi = 1) {
+  drawCenterSquare(video, crop, SIZE, roi);
   return tf.tidy(() => {
     const x = tf.browser.fromPixels(crop).toFloat().div(127.5).sub(1).expandDims(0);
     const f = model.predict(x).mean([1, 2]).squeeze(); // global average pooling → [1280]
@@ -77,15 +77,17 @@ export class Knn {
   }
   labels() { return Object.keys(this.countBy()); }
 
-  predict(emb, k = 5) {
-    const n = this.items.length;
+  // allowed: 후보 라벨 집합(입고 예정 상품 + 배경). 없으면 전체. 반환 dist = 라벨별 득표 비율
+  predict(emb, k = 5, allowed = null) {
+    const items = allowed ? this.items.filter((it) => allowed.has(it.label)) : this.items;
+    const n = items.length;
     if (!n) return null;
     const sims = new Array(n);
     for (let j = 0; j < n; j++) {
-      const e = this.items[j].emb;
+      const e = items[j].emb;
       let d = 0;
       for (let i = 0; i < e.length; i++) d += e[i] * emb[i];
-      sims[j] = { label: this.items[j].label, sim: d };
+      sims[j] = { label: items[j].label, sim: d };
     }
     sims.sort((a, b) => b.sim - a.sim);
     const top = sims.slice(0, Math.min(k, n));
@@ -97,7 +99,8 @@ export class Knn {
       total += w;
     }
     let label = null, best = -1;
-    for (const [l, v] of Object.entries(votes)) if (v > best) { best = v; label = l; }
-    return { label, conf: best / total, sim: top[0].sim };
+    const dist = {};
+    for (const [l, v] of Object.entries(votes)) { dist[l] = v / total; if (v > best) { best = v; label = l; } }
+    return { label, conf: best / total, sim: top[0].sim, dist };
   }
 }

@@ -9,11 +9,14 @@ const KEY = {
 };
 
 export const DEFAULT_SETTINGS = {
-  mode: 'ai',         // ai | barcode | manual
+  mode: 'auto',       // auto(AI 외관 + 라벨) | barcode | manual
   auto: true,         // 자동 카운트
   enterSec: 0.8,      // 같은 상품이 이 시간 이상 연속으로 보이면 1팔레트로 확정
   exitSec: 1.2,       // 다음 팔레트로 넘어가려면 이 시간 이상 빈 화면(또는 다른 상품)
-  minConf: 0.7,       // AI 최소 신뢰도
+  minConf: 0.7,       // AI 최소 신뢰도 (이 아래는 '판단 보류')
+  autoP: 0.75,        // 팔레트 1개 동안 AI 1위 득표율이 이 이상이면 자동 확정, 아니면 '확인 필요'
+  roi: 1,             // AI가 보는 중앙 영역 크기(짧은 변 대비)
+  zoom: false,        // 바코드 모드에서 먼 라벨 확대 판독
   tickMs: 200,        // 추론 주기(ms) ≈ 초당 5회
   k: 5,               // KNN 이웃 수
   dedupeBarcode: false, // 바코드가 팔레트마다 고유(SSCC 등)일 때: 같은 바코드 재스캔 무시

@@ -38,22 +38,25 @@ export async function initBarcode() {
   return (engine = 'zxing');
 }
 
-export async function detectCodes(video) {
-  drawFrame(video, frame, 1280);
-  if (native) return (await native.detect(frame)).map((b) => b.rawValue);
+const crop = document.createElement('canvas');
+
+async function decode(canvas) {
+  if (native) return (await native.detect(canvas)).map((b) => b.rawValue);
   try {
-    const src = new ZXing.HTMLCanvasElementLuminanceSource(frame);
+    const src = new ZXing.HTMLCanvasElementLuminanceSource(canvas);
     return [zx.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(src))).getText()];
   } catch { return []; } // NotFoundException = 화면에 바코드 없음
 }
 
-// 스캔값 → 상품. 상품에 등록한 코드가 스캔값에 포함되면 매칭(GS1 라벨의 (01)GTIN 등 대응). 가장 긴 코드 우선.
-export function matchProduct(raw, products) {
-  let best = null, len = 0;
-  for (const p of products) {
-    for (const c of p.codes || []) {
-      if (c && raw.includes(c) && c.length > len) { best = p; len = c.length; }
-    }
-  }
-  return best;
+// zoom: 전체 화면에서 못 읽으면 중앙 절반을 2배로 확대해 한 번 더 (멀리 있는 라벨)
+export async function detectCodes(video, { zoom = false } = {}) {
+  drawFrame(video, frame, 1920);
+  const codes = await decode(frame);
+  if (codes.length || !zoom) return codes;
+  const w = frame.width / 2, h = frame.height / 2;
+  crop.width = frame.width; crop.height = frame.height;
+  crop.getContext('2d', { willReadFrequently: true }).drawImage(frame, w / 2, h / 2, w, h, 0, 0, crop.width, crop.height);
+  return decode(crop);
 }
+
+

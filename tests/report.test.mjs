@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { summarize, summaryText, summaryCsv } from '../js/report.js';
+import { summarize, summaryText, summaryCsv, sessionMetrics } from '../js/report.js';
 
 const products = [{ id: 'a', name: 'A상품' }, { id: 'b', name: 'B상품' }];
 const ev = (type, pid, qty = 1) => ({ type, pid, qty, t: 0, source: 'ai' });
@@ -37,4 +37,28 @@ test('CSV: BOM + 쉼표 이스케이프', () => {
   const csv = summaryCsv([{ ...session, partner: '가,나' }], products);
   assert.ok(csv.startsWith('﻿입고일시'));
   assert.ok(csv.includes('"가,나",A상품,4,2'));
+});
+
+test('확인 필요 팔레트는 확정 수량과 따로 표시', () => {
+  const ses = { startedAt: 0, events: [ev('in', 'a'), { ...ev('in', 'b'), status: 'review' }] };
+  const s = summarize(ses, products);
+  assert.equal(s.totalIn, 1);
+  assert.equal(s.totalReview, 1);
+  assert.match(summaryText(ses, products), /입고: A상품 1팔레트 \(총 1팔레트\)\n확인 필요: B상품\(추정\) 1팔레트\n전도: 없음/);
+});
+
+test('입고 예정 대비 문구', () => {
+  const ses = { startedAt: 0, expected: [{ pid: 'a', qty: 3 }, { pid: 'b', qty: 2 }], events: [ev('in', 'a'), ev('in', 'a'), ev('in', 'a'), ev('in', 'b')] };
+  assert.match(summaryText(ses, products), /예정 대비: A상품 3\/3\(일치\), B상품 1\/2\(1 부족\)$/);
+});
+
+test('검증 지표: 라벨 판독률·자동 확정률·사람 확인 비율', () => {
+  const m = sessionMetrics({ events: [
+    { type: 'in', qty: 1, source: 'barcode', status: 'ok', sscc: '1' },
+    { type: 'in', qty: 1, source: 'ai', status: 'ok' },
+    { type: 'in', qty: 1, source: 'ai', status: 'review' },
+    { type: 'in', qty: 1, source: 'manual', status: 'ok' },
+    { type: 'fall', qty: 1 },
+  ] });
+  assert.deepEqual(m, { pallets: 4, labelRate: 0.25, autoRate: 0.5, humanRate: 0.5 });
 });

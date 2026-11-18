@@ -20,7 +20,7 @@ export async function startSource(video, src = { kind: 'camera' }) {
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error('이 화면에서는 카메라를 쓸 수 없습니다 (HTTPS 주소 필요)');
     }
-    const size = { width: { ideal: 1280 }, height: { ideal: 720 } };
+    const size = { width: { ideal: 1920 }, height: { ideal: 1080 } }; // 라벨 바코드 판독에 해상도가 중요
     const v = src.deviceId ? { deviceId: { exact: src.deviceId }, ...size } : { facingMode: { ideal: 'environment' }, ...size };
     stream = await navigator.mediaDevices.getUserMedia({ video: v, audio: false });
     video.srcObject = stream;
@@ -51,10 +51,20 @@ export async function listCameras() {
   } catch { return []; }
 }
 
-// 영상 중앙 정사각형(=AI가 보는 영역)을 size×size 캔버스에 그린다
-export function drawCenterSquare(video, canvas, size) {
+// 손전등(지원 기기만: 주로 안드로이드 크롬)
+export function torchSupported() {
+  const t = stream?.getVideoTracks?.()[0];
+  try { return !!t?.getCapabilities?.().torch; } catch { return false; }
+}
+export async function setTorch(on) {
+  const t = stream?.getVideoTracks?.()[0];
+  await t.applyConstraints({ advanced: [{ torch: on }] });
+}
+
+// 영상 중앙 정사각형(=AI가 보는 영역)을 size×size 캔버스에 그린다. scale: 짧은 변 대비 비율
+export function drawCenterSquare(video, canvas, size, scale = 1) {
   const vw = video.videoWidth, vh = video.videoHeight;
-  const s = Math.min(vw, vh);
+  const s = Math.min(vw, vh) * scale;
   canvas.width = size; canvas.height = size;
   canvas.getContext('2d', { willReadFrequently: true })
     .drawImage(video, (vw - s) / 2, (vh - s) / 2, s, s, 0, 0, size, size);
@@ -75,11 +85,11 @@ export function snapshotJpeg(video, maxW = 800, quality = 0.75) {
 }
 
 // 화면에 보이는 영상(object-fit: cover) 위에서 AI 영역(중앙 정사각형)의 위치(px)
-export function guideRect(video) {
+export function guideRect(video, scale = 1) {
   const vw = video.videoWidth, vh = video.videoHeight;
   const cw = video.clientWidth, ch = video.clientHeight;
   if (!vw || !cw) return null;
   const sc = Math.max(cw / vw, ch / vh);
-  const side = Math.min(vw, vh) * sc;
+  const side = Math.min(vw, vh) * sc * scale;
   return { left: (cw - side) / 2, top: (ch - side) / 2, side };
 }

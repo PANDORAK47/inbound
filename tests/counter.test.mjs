@@ -13,10 +13,22 @@ const run = (seq, opts, stepMs = 100) => {
     const obs = ch === '.' ? { label: BG, conf: 0.95 }
       : ch === '?' ? { label: 'A', conf: 0.3 }
       : { label: ch, conf: 0.95 };
-    const ev = c.feed(obs, t);
-    if (ev) counts.push(ev.label);
+    for (const ev of c.feed(obs, t)) if (ev.type === 'count') counts.push(ev.label);
   }
   return counts;
+};
+
+// count/exit 이벤트 전체 기록
+const events = (seq, opts) => {
+  const c = createCounter({ enterMs: 200, exitMs: 300, minConf: 0.7, ...opts });
+  const out = [];
+  let t = 0;
+  for (const ch of seq) {
+    t += 100;
+    const obs = ch === '.' ? { label: BG, conf: 0.95 } : { label: ch, conf: 0.95 };
+    for (const ev of c.feed(obs, t)) out.push(`${ev.type}:${ev.label}`);
+  }
+  return { out, flush: c.flush().map((e) => `${e.type}:${e.label}`) };
 };
 
 test('팔레트 1개가 지나가면 1회만 센다', () => {
@@ -53,4 +65,21 @@ test('기기가 느려도(프레임 간격 500ms) 시간 기준으로 동일하�
 
 test('바코드 모드: 1프레임만 보여도 카운트(enterMs 0, minFrames 1)', () => {
   assert.deepEqual(run('..A....A.A....', { enterMs: 0, minFrames: 1 }), ['A', 'A']);
+});
+
+test('비슷한 상품끼리 흔들려도(A/B 번갈아 인식) 팔레트 1개로 센다', () => {
+  assert.deepEqual(run('..AAAABABBABAAB.....'), ['A']);
+});
+
+test('count 다음에는 반드시 exit (식별 최종 판정 시점)', () => {
+  assert.deepEqual(events('..AAAA.....BBBB.....').out, ['count:A', 'exit:A', 'count:B', 'exit:B']);
+});
+
+test('간격 없는 상품 전환: exit 후 count', () => {
+  assert.deepEqual(events('..AAAABBBBBBB').out, ['count:A', 'exit:A', 'count:B']);
+});
+
+test('flush: 진행 중 팔레트 마감', () => {
+  assert.deepEqual(events('..AAAA').flush, ['exit:A']);
+  assert.deepEqual(events('..AAAA.....').flush, []);
 });
