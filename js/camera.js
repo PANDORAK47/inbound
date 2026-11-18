@@ -1,27 +1,49 @@
-// 카메라: 맥북 웹캠 / 휴대폰 후면카메라. getUserMedia 는 HTTPS 또는 localhost 에서만 동작한다.
+// 영상 입력: ① 카메라(맥북 웹캠 / 휴대폰 후면) ② 스트림(데모 카메라) ③ 동영상 파일(녹화한 하차 영상 분석)
+// 카메라(getUserMedia)는 HTTPS 또는 localhost 에서만 동작한다.
 
 let stream = null;
+let onStop = null;
+let fileUrl = null;
+let kind = null; // 'camera' | 'stream' | 'file' | null
 
-export async function startCamera(video, deviceId) {
-  stopCamera(video);
-  if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error('이 브라우저는 카메라를 지원하지 않거나 HTTPS 주소가 아닙니다.');
+// src: { kind: 'camera', deviceId? } | { kind: 'stream', stream, onStop? } | { kind: 'file', file }
+export async function startSource(video, src = { kind: 'camera' }) {
+  stopSource(video);
+  if (src.kind === 'stream') {
+    stream = src.stream; onStop = src.onStop || null;
+    video.srcObject = stream;
+  } else if (src.kind === 'file') {
+    fileUrl = URL.createObjectURL(src.file);
+    video.loop = false;
+    video.src = fileUrl;
+  } else {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('이 화면에서는 카메라를 쓸 수 없습니다 (HTTPS 주소 필요)');
+    }
+    const size = { width: { ideal: 1280 }, height: { ideal: 720 } };
+    const v = src.deviceId ? { deviceId: { exact: src.deviceId }, ...size } : { facingMode: { ideal: 'environment' }, ...size };
+    stream = await navigator.mediaDevices.getUserMedia({ video: v, audio: false });
+    video.srcObject = stream;
   }
-  const size = { width: { ideal: 1280 }, height: { ideal: 720 } };
-  const video_ = deviceId ? { deviceId: { exact: deviceId }, ...size } : { facingMode: { ideal: 'environment' }, ...size };
-  stream = await navigator.mediaDevices.getUserMedia({ video: video_, audio: false });
-  video.srcObject = stream;
+  kind = src.kind;
+  video.muted = true;
   await video.play();
   await new Promise((r) => (video.videoWidth ? r() : video.addEventListener('loadedmetadata', r, { once: true })));
 }
 
-export function stopCamera(video) {
-  stream?.getTracks().forEach((t) => t.stop());
-  stream = null;
-  if (video) video.srcObject = null;
+export function stopSource(video) {
+  if (onStop) onStop(); else stream?.getTracks().forEach((t) => t.stop());
+  stream = null; onStop = null;
+  if (video) {
+    video.srcObject = null;
+    if (fileUrl) { video.removeAttribute('src'); video.load(); }
+  }
+  if (fileUrl) { URL.revokeObjectURL(fileUrl); fileUrl = null; }
+  kind = null;
 }
 
-export const isOn = () => !!stream;
+export const isOn = () => kind !== null;
+export const sourceKind = () => kind;
 
 export async function listCameras() {
   try {

@@ -20,10 +20,14 @@ export const DEFAULT_SETTINGS = {
   sound: true,
 };
 
+// 브라우저 저장소가 막힌 환경(사생활 보호 모드, 일부 임베드 화면)에서도 앱이 멈추지 않도록 모든 접근을 try/catch.
 const read = (k, fallback) => {
   try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
 };
-const write = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+const write = (k, v) => {
+  try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { console.warn('저장 실패(브라우저 저장소 사용 불가)', e); }
+};
+const remove = (k) => { try { localStorage.removeItem(k); } catch { /* */ } };
 
 export const getProducts = () => read(KEY.products, []);
 export const saveProducts = (p) => write(KEY.products, p);
@@ -32,11 +36,13 @@ export const saveSettings = (s) => write(KEY.settings, s);
 export const getSessions = () => read(KEY.sessions, []);
 export const saveSessions = (s) => write(KEY.sessions, s);
 export const getActive = () => read(KEY.active, null);
-export const saveActive = (s) => (s ? write(KEY.active, s) : localStorage.removeItem(KEY.active));
+export const saveActive = (s) => (s ? write(KEY.active, s) : remove(KEY.active));
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
-// ---- IndexedDB ----
+// ---- IndexedDB (학습 샘플·사진). 사용 불가하면 메모리로 대체(새로고침 시 사라짐) ----
+const mem = { samples: [], photos: new Map(), seq: 0 };
+let useMem = false;
 let dbp = null;
 function db() {
   if (dbp) return dbp;
@@ -58,26 +64,47 @@ async function tx(store, mode, fn) {
   const d = await db();
   return new Promise((resolve, reject) => {
     const t = d.transaction(store, mode);
-    const os = t.objectStore(store);
     let out;
-    Promise.resolve(fn(os)).then((r) => { out = r; });
+    Promise.resolve(fn(t.objectStore(store))).then((r) => { out = r; });
     t.oncomplete = () => resolve(out);
     t.onerror = () => reject(t.error);
   });
 }
 const reqP = (r) => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
 
-export const addSample = (s) => tx('samples', 'readwrite', (os) => reqP(os.add(s)));
-export const getAllSamples = () => tx('samples', 'readonly', (os) => reqP(os.getAll()));
-export const clearSamples = () => tx('samples', 'readwrite', (os) => reqP(os.clear()));
-export const deleteSamplesByLabel = (label) => tx('samples', 'readwrite', (os) => new Promise((res) => {
-  const cur = os.index('label').openCursor(IDBKeyRange.only(label));
-  cur.onsuccess = () => { const c = cur.result; if (c) { c.delete(); c.continue(); } else res(); };
-}));
+async function withDb(idbFn, memFn) {
+  if (!useMem) {
+    try { return await idbFn(); } catch (e) { console.warn('IndexedDB 사용 불가 → 메모리 저장', e); useMem = true; }
+  }
+  return memFn();
+}
+export const isMemoryOnly = () => useMem;
 
-export const putPhoto = (id, data) => tx('photos', 'readwrite', (os) => reqP(os.put({ id, data })));
-export const getPhoto = (id) => tx('photos', 'readonly', (os) => reqP(os.get(id))).then((r) => r?.data);
-export const deletePhoto = (id) => tx('photos', 'readwrite', (os) => reqP(os.delete(id)));
+export const addSample = (s) => withDb(
+  () => tx('samples', 'readwrite', (os) => reqP(os.add(s))),
+  () => { mem.samples.push({ ...s, id: ++mem.seq }); });
+export const getAllSamples = () => withDb(
+  () => tx('samples', 'readonly', (os) => reqP(os.getAll())),
+  () => mem.samples.slice());
+export const clearSamples = () => withDb(
+  () => tx('samples', 'readwrite', (os) => reqP(os.clear())),
+  () => { mem.samples = []; });
+export const deleteSamplesByLabel = (label) => withDb(
+  () => tx('samples', 'readwrite', (os) => new Promise((res) => {
+    const cur = os.index('label').openCursor(IDBKeyRange.only(label));
+    cur.onsuccess = () => { const c = cur.result; if (c) { c.delete(); c.continue(); } else res(); };
+  })),
+  () => { mem.samples = mem.samples.filter((x) => x.label !== label); });
+
+export const putPhoto = (id, data) => withDb(
+  () => tx('photos', 'readwrite', (os) => reqP(os.put({ id, data }))),
+  () => { mem.photos.set(id, data); });
+export const getPhoto = (id) => withDb(
+  () => tx('photos', 'readonly', (os) => reqP(os.get(id))).then((r) => r?.data),
+  () => mem.photos.get(id));
+export const deletePhoto = (id) => withDb(
+  () => tx('photos', 'readwrite', (os) => reqP(os.delete(id))),
+  () => { mem.photos.delete(id); });
 
 // Float32Array <-> base64 (학습데이터 내보내기용)
 export function f32ToB64(f) {

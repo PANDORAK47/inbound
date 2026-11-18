@@ -10,7 +10,7 @@
 <body>
   <header class="top">
     <h1>팔레트 입고 카운터</h1>
-    <select id="cam-select" aria-label="카메라 선택"></select>
+    <select id="cam-select" aria-label="영상 입력 선택"></select>
   </header>
 
   <nav class="tabs" role="tablist">
@@ -29,8 +29,14 @@
         <div class="bar"><i id="hud-bar"></i></div>
         <div id="hud-state" class="hud-state"></div>
       </div>
+      <div id="demo-caption" class="demo-caption" hidden></div>
       <div id="flash" class="flash"></div>
-      <button id="cam-start" class="cam-start">카메라 켜기</button>
+      <div id="cam-start" class="cam-start">
+        <button id="src-camera" class="btn primary">카메라 켜기</button>
+        <button id="src-demo" class="btn">데모 카메라</button>
+        <label class="btn" for="src-file">영상 파일</label>
+      </div>
+      <input type="file" id="src-file" accept="video/*" hidden>
     </div>
     <div class="cam-ctl">
       <div class="seg" id="mode-seg">
@@ -39,6 +45,13 @@
         <button data-mode="manual">수동</button>
       </div>
       <label class="switch"><input type="checkbox" id="auto-count" checked><span>자동 카운트</span></label>
+    </div>
+    <div id="demo-bar" class="demo-bar" hidden>
+      <span>데모 장면</span>
+      <button class="btn" data-scene="bg">빈 화면</button>
+      <button class="btn" data-scene="A">A 팔레트</button>
+      <button class="btn" data-scene="B">B 팔레트</button>
+      <button class="btn" data-scene="code">A 바코드</button>
     </div>
   </section>
 
@@ -53,6 +66,7 @@
         </div>
         <button class="btn primary big" type="submit">입고 시작</button>
         <p class="hint" id="no-product-hint" hidden>먼저 <b>상품·학습</b> 탭에서 상품을 등록하세요.</p>
+        <button type="button" id="demo-run" class="btn big">카메라 없이 1분 체험 (자동 시연)</button>
       </form>
 
       <div id="session" hidden>
@@ -153,6 +167,17 @@
       <div class="row">
         <button value="cancel" class="btn">무시</button>
         <button value="ok" class="btn primary">연결</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 확인 창 (브라우저 confirm 대신) -->
+  <dialog id="ask-dlg">
+    <form method="dialog" class="dlg">
+      <p id="ask-msg" class="ask-msg"></p>
+      <div class="row">
+        <button value="cancel" class="btn">취소</button>
+        <button value="ok" id="ask-ok" class="btn primary">확인</button>
       </div>
     </form>
   </dialog>

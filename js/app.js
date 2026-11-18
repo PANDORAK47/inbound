@@ -6,6 +6,7 @@ import { summarize, summaryText, summaryCsv, eventsCsv, fmtTime } from './report
 import * as Cam from './camera.js';
 import * as AI from './recognizer.js';
 import * as BC from './barcode.js';
+import { createDemoCamera } from './democam.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -28,6 +29,8 @@ const st = {
   recording: null,      // 학습 촬영 중인 라벨
   loopOn: false,
   barcodeEngine: null,
+  demo: null,           // 데모 카메라 (장면 전환용)
+  demoRunning: false,   // 자동 시연 중
 };
 const video = $('#video');
 const nameOf = (id) => (id === BG ? BG_CLASS.name : st.products.find((p) => p.id === id)?.name || '?');
@@ -60,11 +63,29 @@ function flash(text) {
   requestAnimationFrame(() => requestAnimationFrame(() => f.classList.remove('show')));
 }
 
-function download(name, text, type = 'text/csv;charset=utf-8') {
+// 파일 저장: claude.ai 체험 페이지에서는 downloads 기능(저장 확인창), 일반 웹에서는 브라우저 다운로드
+async function download(name, text, type = 'text/csv;charset=utf-8') {
+  const dl = window.claude?.use ? await window.claude.use('downloads').catch(() => null) : null;
+  if (dl) {
+    try { await dl.save({ filename: name, data: text }); toast('저장했습니다'); }
+    catch (e) { if (e?.code !== 'declined') toast(`저장할 수 없습니다 (${e?.code || e})`, 4000); }
+    return;
+  }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([text], { type }));
   a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// 확인 창 (브라우저 confirm 은 일부 환경에서 막히므로 화면 안 대화상자 사용)
+function ask(msg, okText = '확인', danger = false) {
+  const d = $('#ask-dlg');
+  $('#ask-msg').textContent = msg;
+  $('#ask-ok').textContent = okText;
+  $('#ask-ok').className = `btn ${danger ? 'danger' : 'primary'}`;
+  d.returnValue = '';
+  d.showModal();
+  return new Promise((res) => d.addEventListener('close', () => res(d.returnValue === 'ok'), { once: true }));
 }
 
 async function copy(text) {
@@ -96,29 +117,68 @@ function setTab(tab) {
 }
 document.querySelectorAll('.tab').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
 
-// ---------------- 카메라 ----------------
-async function startCam() {
+// ---------------- 영상 입력 (카메라 / 데모 카메라 / 동영상 파일) ----------------
+async function startSrc(src) {
   try {
-    await Cam.startCamera(video, $('#cam-select').value || undefined);
+    if (src.kind === 'demo') {
+      const demo = createDemoCamera();
+      await Cam.startSource(video, { kind: 'stream', stream: demo.stream, onStop: () => { demo.stop(); if (st.demo === demo) st.demo = null; } });
+      st.demo = demo;
+    } else {
+      await Cam.startSource(video, src);
+    }
     $('#cam-start').hidden = true;
-    await fillCameraList();
+    await fillSourceList(src.kind === 'demo' ? '__demo__' : src.kind === 'file' ? '__file__' : src.deviceId || '');
+    renderDemoBar();
     updateGuide();
     loop();
+    return true;
   } catch (e) {
-    toast(`카메라 오류: ${e.message || e.name}`, 4000);
-    hud('카메라 사용 불가', 0, 'HTTPS 주소인지, 카메라 권한을 허용했는지 확인하세요');
+    $('#cam-start').hidden = false;
+    renderDemoBar();
+    const denied = /NotAllowed|Permission|HTTPS/i.test(`${e.name} ${e.message}`);
+    toast(denied ? '카메라를 쓸 수 없는 화면입니다. 데모 카메라나 영상 파일로 체험하세요.' : `영상 오류: ${e.message || e.name}`, 5000);
+    hud('카메라 사용 불가', 0, '카메라 권한 허용 또는 HTTPS 주소 필요 — 데모 카메라/영상 파일은 사용 가능');
+    return false;
   }
 }
-async function fillCameraList() {
+
+async function fillSourceList(value) {
   const sel = $('#cam-select');
-  const cur = sel.value;
   const cams = await Cam.listCameras();
   sel.innerHTML = '<option value="">기본(후면) 카메라</option>' +
-    cams.map((c, i) => `<option value="${esc(c.deviceId)}">${esc(c.label || `카메라 ${i + 1}`)}</option>`).join('');
-  sel.value = cur;
+    cams.filter((c) => c.deviceId).map((c, i) => `<option value="${esc(c.deviceId)}">${esc(c.label || `카메라 ${i + 1}`)}</option>`).join('') +
+    '<option value="__demo__">데모 카메라 (가상)</option><option value="__file__">동영상 파일…</option>';
+  sel.value = value ?? '';
 }
-$('#cam-start').addEventListener('click', startCam);
-$('#cam-select').addEventListener('change', () => Cam.isOn() && startCam());
+
+$('#src-camera').addEventListener('click', () => startSrc({ kind: 'camera' }));
+$('#src-demo').addEventListener('click', () => startSrc({ kind: 'demo' }));
+$('#src-file').addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (f) startSrc({ kind: 'file', file: f });
+});
+$('#cam-select').addEventListener('change', (e) => {
+  const v = e.target.value;
+  if (v === '__file__') { $('#src-file').click(); return; }
+  startSrc(v === '__demo__' ? { kind: 'demo' } : { kind: 'camera', deviceId: v || undefined });
+});
+
+// 데모 장면 버튼
+function renderDemoBar() {
+  $('#demo-bar').hidden = !st.demo;
+  if (!st.demo) return;
+  const cur = st.demo.scene.startsWith('code:') ? 'code' : st.demo.scene;
+  document.querySelectorAll('#demo-bar [data-scene]').forEach((b) => b.classList.toggle('on', b.dataset.scene === cur));
+}
+$('#demo-bar').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-scene]');
+  if (!b || !st.demo) return;
+  // 바코드 장면: 팔레트마다 다른 일련번호(SSCC 흉내)
+  st.demo.setScene(b.dataset.scene === 'code' ? `code:(01)08801234567890(21)P${Date.now().toString().slice(-6)}` : b.dataset.scene);
+  renderDemoBar();
+});
 
 function updateGuide() {
   const g = $('#guide');
@@ -159,7 +219,7 @@ async function setMode(mode) {
 document.querySelectorAll('#mode-seg button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
 $('#auto-count').addEventListener('change', (e) => { st.settings.auto = e.target.checked; S.saveSettings(st.settings); buildCounter(); });
 
-const dialogOpen = () => $('#fall-dlg').open || $('#code-dlg').open;
+const dialogOpen = () => $('#fall-dlg').open || $('#code-dlg').open || $('#ask-dlg').open;
 const counting = () => !!st.active && st.settings.auto && st.tab === 'work' && !dialogOpen();
 
 function stateText(snap) {
@@ -186,6 +246,9 @@ async function loop() {
 
 async function tick() {
   if (!video.videoWidth) return;
+  if (Cam.sourceKind() === 'file' && (video.ended || video.paused)) {
+    return hud('영상 재생 끝', 0, '다른 동영상은 위 선택 메뉴 → 동영상 파일');
+  }
   const mode = st.settings.mode;
   let emb = null;
 
@@ -261,27 +324,24 @@ async function removeEvent(id) {
 }
 
 // ---------------- 입고 작업 화면 ----------------
-$('#start-form').addEventListener('submit', (e) => {
-  e.preventDefault();
-  if (!st.products.length) { toast('상품을 먼저 등록하세요'); setTab('train'); return; }
-  st.active = {
-    id: S.uid(),
-    vehicle: $('#in-vehicle').value.trim(),
-    partner: $('#in-partner').value.trim(),
-    startedAt: Date.now(),
-    events: [],
-  };
+function startSession(vehicle, partner) {
+  st.active = { id: S.uid(), vehicle, partner, startedAt: Date.now(), events: [] };
   S.saveActive(st.active);
   st.seenCodes = new Set();
   buildCounter();
   keepAwake(true);
   renderWork();
-  if (!Cam.isOn()) startCam();
+}
+$('#start-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  if (!st.products.length) { toast('상품을 먼저 등록하세요'); setTab('train'); return; }
+  startSession($('#in-vehicle').value.trim(), $('#in-partner').value.trim());
+  if (!Cam.isOn()) startSrc({ kind: 'camera' });
 });
 
-$('#end-btn').addEventListener('click', () => {
+$('#end-btn').addEventListener('click', async () => {
   const text = summaryText(st.active, st.products);
-  if (!confirm(`입고를 완료할까요?\n\n${text}`)) return;
+  if (!(await ask(`입고를 완료할까요?\n\n${text}`, '입고 완료'))) return;
   st.active.endedAt = Date.now();
   const sessions = S.getSessions();
   sessions.unshift(st.active);
@@ -311,9 +371,9 @@ $('#tiles').addEventListener('click', (e) => {
   if (cur > 0) addEvent({ type: 'in', pid, qty: -1, source: 'manual' });
 });
 
-$('#log').addEventListener('click', (e) => {
+$('#log').addEventListener('click', async (e) => {
   const b = e.target.closest('button.x');
-  if (b && confirm('이 기록을 삭제할까요?')) removeEvent(b.dataset.id);
+  if (b && (await ask('이 기록을 삭제할까요?', '삭제', true))) removeEvent(b.dataset.id);
 });
 
 $('#copy-btn').addEventListener('click', () => copy(summaryText(st.active, st.products)));
@@ -398,15 +458,20 @@ codeDlg.addEventListener('close', () => {
 });
 
 // ---------------- 상품·학습 ----------------
+function addProduct(name, codes = []) {
+  const p = { id: S.uid(), name, color: COLORS[st.products.length % COLORS.length], codes };
+  st.products.push(p);
+  S.saveProducts(st.products);
+  renderClasses(); renderWork();
+  return p;
+}
 $('#add-form').addEventListener('submit', (e) => {
   e.preventDefault();
   const name = $('#new-name').value.trim();
   if (!name) return;
   if (st.products.some((p) => p.name === name)) return toast('같은 이름의 상품이 있습니다');
-  st.products.push({ id: S.uid(), name, color: COLORS[st.products.length % COLORS.length], codes: [] });
-  S.saveProducts(st.products);
+  addProduct(name);
   $('#new-name').value = '';
-  renderClasses(); renderWork();
 });
 
 async function saveSample(label, emb) {
@@ -453,7 +518,7 @@ $('#classes').addEventListener('pointerdown', (e) => {
   const b = e.target.closest('.hold');
   if (!b) return;
   e.preventDefault();
-  if (!Cam.isOn()) { toast('카메라를 먼저 켜세요'); return; }
+  if (!Cam.isOn()) { toast('카메라(또는 데모 카메라)를 먼저 켜세요'); return; }
   b.setPointerCapture?.(e.pointerId);
   b.classList.add('rec');
   st.recording = b.dataset.label;
@@ -466,12 +531,12 @@ $('#classes').addEventListener('click', async (e) => {
   if (!b) return;
   const label = b.closest('.cls').dataset.label;
   if (b.dataset.act === 'reset') {
-    if (!confirm(`${nameOf(label)} 학습 샘플을 모두 지울까요?`)) return;
+    if (!(await ask(`${nameOf(label)} 학습 샘플을 모두 지울까요?`, '지우기', true))) return;
     await S.deleteSamplesByLabel(label);
     st.knn.removeLabel(label); delete st.thumbs[label];
     renderClasses();
   } else if (b.dataset.act === 'del') {
-    if (!confirm(`${nameOf(label)} 상품을 삭제할까요? (학습 샘플도 삭제, 지난 기록은 유지)`)) return;
+    if (!(await ask(`${nameOf(label)} 상품을 삭제할까요?\n학습 샘플도 삭제되고, 지난 입고 기록은 유지됩니다.`, '삭제', true))) return;
     await S.deleteSamplesByLabel(label);
     st.knn.removeLabel(label); delete st.thumbs[label];
     st.products = st.products.filter((p) => p.id !== label);
@@ -531,7 +596,7 @@ $('#import-file').addEventListener('change', async (e) => {
   try {
     const data = JSON.parse(await f.text());
     if (data.app !== 'pallet-inbound') throw new Error('형식이 다른 파일입니다');
-    if (!confirm(`상품 ${data.products.length}개, 샘플 ${data.samples.length}장으로 교체할까요? (현재 학습 데이터는 삭제)`)) return;
+    if (!(await ask(`상품 ${data.products.length}개, 샘플 ${data.samples.length}장으로 교체할까요?\n현재 학습 데이터는 삭제됩니다.`, '교체', true))) return;
     await S.clearSamples();
     for (const s of data.samples) await S.addSample({ label: s.label, emb: S.b64ToF32(s.emb), thumb: s.thumb });
     st.products = data.products;
@@ -590,7 +655,7 @@ $('#history').addEventListener('click', async (e) => {
   const ses = findSession(id);
   if (b.dataset.act === 'copy') copy(summaryText(ses, st.products));
   if (b.dataset.act === 'csv') download(`입고상세_${fmtTime(ses.startedAt).replace(/[: ]/g, '')}_${ses.vehicle || ''}.csv`, eventsCsv(ses, st.products));
-  if (b.dataset.act === 'del' && confirm('이 입고 기록을 삭제할까요?')) {
+  if (b.dataset.act === 'del' && (await ask('이 입고 기록을 삭제할까요?', '삭제', true))) {
     ses.events.forEach((ev) => ev.photoId && S.deletePhoto(ev.photoId).catch(() => {}));
     S.saveSessions(S.getSessions().filter((s) => s.id !== id));
     renderHistory();
@@ -598,9 +663,73 @@ $('#history').addEventListener('click', async (e) => {
 });
 $('#csv-all-btn').addEventListener('click', () => download(`입고요약_전체_${fmtTime(Date.now()).slice(0, 10)}.csv`, summaryCsv(S.getSessions(), st.products)));
 
+// ---------------- 자동 시연 (카메라 없이 1분 체험) ----------------
+// 데모 카메라로 실제와 같은 과정(학습 → 입고 시작 → 자동 카운트 → 바코드)을 자동으로 보여준다.
+function caption(text) {
+  $('#demo-caption').textContent = text;
+  $('#demo-caption').hidden = !text;
+}
+async function runDemo() {
+  if (st.demoRunning) return;
+  st.demoRunning = true;
+  $('#demo-run').disabled = true;
+  const cam = () => st.demo || Promise.reject(new Error('stopped'));
+  const scene = async (sc, text, ms) => {
+    (await cam()).setScene(sc); renderDemoBar(); caption(text); await sleep(ms);
+    if (!st.demo) throw new Error('stopped');
+  };
+  try {
+    if (!st.demo && !(await startSrc({ kind: 'demo' }))) return;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    caption('준비: AI 모델 불러오는 중');
+    await AI.loadModel();
+    renderEngineInfo();
+    const A = st.products.find((p) => p.name === 'A상품') || addProduct('A상품', ['8801234567890']);
+    const B = st.products.find((p) => p.name === 'B상품') || addProduct('B상품');
+    if (!(A.codes || []).includes('8801234567890')) { A.codes = [...(A.codes || []), '8801234567890']; S.saveProducts(st.products); }
+    await setMode('ai');
+
+    // ① 학습: 빈 화면 / A / B 를 각각 촬영 (이미 충분하면 건너뜀)
+    setTab('train');
+    for (const [label, sc, text] of [[BG, 'bg', '① 학습: 빈 화면 촬영'], [A.id, 'A', '① 학습: A상품 팔레트 촬영'], [B.id, 'B', '① 학습: B상품 팔레트 촬영']]) {
+      if ((st.knn.countBy()[label] || 0) >= 15) continue;
+      await scene(sc, text, 400);
+      st.recording = label;
+      await sleep(3500);
+      st.recording = null;
+    }
+
+    // ② 입고 시작 → 팔레트가 지나갈 때마다 자동 카운트
+    setTab('work');
+    if (!st.active) startSession('12가3456 (체험)', '데모물산');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    await scene('bg', '② 입고 시작 — 하차 대기', 1500);
+    for (const [sc, text] of [['A', 'A상품 팔레트 하차'], ['bg', '팔레트 빠짐 (빈 화면)'], ['A', 'A상품 팔레트 하차'], ['bg', '팔레트 빠짐 (빈 화면)'],
+      ['B', 'B상품 팔레트 하차'], ['bg', '팔레트 빠짐 (빈 화면)']]) await scene(sc, `② ${text}`, 2600);
+
+    // ③ 바코드 모드
+    await setMode('barcode');
+    await scene('bg', '③ 바코드 모드로 전환', 2000);
+    await scene('code:(01)08801234567890(21)P000101', '③ A상품 팔레트 라벨 스캔', 2600);
+    await scene('bg', '③ 라벨 빠짐', 2200);
+    await setMode('ai');
+    caption('');
+    toast('시연 끝 — 장면 버튼과 ‘전도 기록’을 직접 눌러보세요', 6000);
+  } catch (e) {
+    caption('');
+    if (e.message !== 'stopped') toast(`시연 중단: ${e.message}`, 4000);
+  } finally {
+    st.recording = null;
+    st.demoRunning = false;
+    $('#demo-run').disabled = false;
+  }
+}
+$('#demo-run').addEventListener('click', runDemo);
+
 // ---------------- 시작 ----------------
 (async function init() {
   bindSettings();
+  fillSourceList('');
   await setMode(st.settings.mode || 'ai');
   renderWork();
   if (st.active) keepAwake(true);

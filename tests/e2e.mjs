@@ -79,7 +79,7 @@ const tileNum = async (name) => (await page.locator('.tile', { hasText: name }).
 const step = (m) => console.log(`- ${m}`);
 
 // 1) 상품 등록 + 학습
-await page.click('#cam-start');
+await page.click('#src-camera');
 await page.click('.tab[data-tab=train]');
 for (const n of ['A상품', 'B상품']) { await page.fill('#new-name', n); await page.click('#add-form button'); }
 await page.waitForFunction(() => document.querySelector('#engine-info').textContent.includes('준비됨'), null, { timeout: 60000 });
@@ -168,13 +168,31 @@ await page.screenshot({ path: path.join(SHOTS, 'work.png'), fullPage: true });
 await page.reload();
 assert.equal(await tileNum('A상품'), '4');
 
-// 8) 입고 완료 → 기록 탭
+// 8) 입고 완료(화면 안 확인창) → 기록 탭
 await page.click('#end-btn');
+await page.click('#ask-ok');
 await page.click('.tab[data-tab=history]');
 await page.click('.hist-item summary');
 await page.waitForSelector('.hist-item .photos img');
 step(`기록: ${(await page.textContent('.hist-item summary')).replace(/\s+/g, ' ').trim()}`);
 await page.screenshot({ path: path.join(SHOTS, 'history.png') });
+
+// 9) 카메라 없는 환경 → '카메라 없이 1분 체험' 자동 시연
+const ctx2 = await browser.newContext({ viewport: { width: 400, height: 860 }, deviceScaleFactor: 2 });
+const p2 = await ctx2.newPage();
+p2.on('pageerror', (e) => errors.push(e.message));
+await p2.goto(URL_);
+await p2.click('#src-camera');
+await p2.waitForFunction(() => document.querySelector('#hud-label').textContent.includes('카메라 사용 불가'));
+step('카메라 없음 → 안내 표시 확인');
+await p2.click('#demo-run');
+await sleep(25000);
+await p2.screenshot({ path: path.join(SHOTS, 'demo.png') });
+await p2.waitForFunction(() => !document.querySelector('#demo-run').disabled, null, { timeout: 120000 });
+const t2 = async (n) => (await p2.locator('.tile', { hasText: n }).locator('.num').textContent()).replace(/\D/g, '');
+step(`자동 시연 결과: A=${await t2('A상품')} B=${await t2('B상품')}`);
+assert.equal(await t2('A상품'), '3'); // AI 2 + 바코드 1
+assert.equal(await t2('B상품'), '1');
 
 assert.deepEqual(errors, [], `페이지 오류: ${errors.join('\n')}`);
 await browser.close();

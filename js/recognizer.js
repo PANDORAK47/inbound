@@ -5,6 +5,7 @@
 import { drawCenterSquare } from './camera.js';
 
 const MODEL_URL = 'models/mobilenet_v2_035/model.json';
+const MODEL_B64_URL = 'models/mobilenet_v2_035/weights.b64.txt';
 const SIZE = 224;
 let model = null;
 let loading = null;
@@ -15,13 +16,34 @@ export function loadModel() {
   if (!loading) {
     loading = (async () => {
       await tf.ready();
-      model = await tf.loadLayersModel(MODEL_URL);
+      try {
+        model = await tf.loadLayersModel(MODEL_URL);
+      } catch (e) {
+        // 바이너리(.bin) 파일을 못 쓰는 환경(claude.ai 체험 페이지)용: base64 텍스트 가중치로 대체
+        model = await loadFromBase64(MODEL_URL, MODEL_B64_URL).catch(() => { throw e; });
+      }
       tf.tidy(() => model.predict(tf.zeros([1, SIZE, SIZE, 3]))); // 워밍업
       return model;
     })();
   }
   return loading;
 }
+async function loadFromBase64(jsonUrl, b64Url) {
+  const [mj, b64] = await Promise.all([
+    fetch(jsonUrl).then((r) => r.json()),
+    fetch(b64Url).then((r) => { if (!r.ok) throw new Error(`${b64Url} ${r.status}`); return r.text(); }),
+  ]);
+  const bin = atob(b64.trim());
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return tf.loadLayersModel(tf.io.fromMemory({
+    modelTopology: mj.modelTopology,
+    format: mj.format,
+    weightSpecs: mj.weightsManifest.flatMap((g) => g.weights),
+    weightData: bytes.buffer,
+  }));
+}
+
 export const isLoaded = () => !!model;
 export const backend = () => (window.tf ? tf.getBackend() : '-');
 

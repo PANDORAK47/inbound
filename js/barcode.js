@@ -15,6 +15,13 @@ function loadScript(src) {
   });
 }
 
+let zxLoad = null;
+export function ensureZXing() {
+  if (window.ZXing) return Promise.resolve();
+  zxLoad ||= loadScript('vendor/zxing.min.js').catch((e) => { zxLoad = null; throw e; });
+  return zxLoad;
+}
+
 export async function initBarcode() {
   if (engine) return engine;
   if ('BarcodeDetector' in window) {
@@ -23,7 +30,7 @@ export async function initBarcode() {
       if (formats.length) { native = new window.BarcodeDetector({ formats }); return (engine = 'native'); }
     } catch { /* ZXing 으로 대체 */ }
   }
-  if (!window.ZXing) await loadScript('vendor/zxing.min.js');
+  await ensureZXing();
   const hints = new Map();
   hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
   zx = new ZXing.MultiFormatReader();
